@@ -58,13 +58,14 @@ List:
 | --- | --- |
 | ↑↓ or k j | Move |
 | ⏎ or o | View the body and comments |
+| # or title | Open that issue or pull request on the web |
 | b | Open in the browser |
 | y | Copy the link |
 | r | Refresh |
 | s | Cycle state. Issues: Open / Closed / All. Pull requests: Open / Merged / Closed / All |
 | p | Switch between issues and pull requests |
 
-`Open pull requests for this project` opens the same pane on pull requests. `n` creates an issue, not a pull request.
+`Open pull requests for this project` opens the same pane on pull requests. The Issues and Pull requests badges show how many are open, with `+` when the list is capped at 100. `n` creates an issue, not a pull request.
 
 Press esc in the detail view to go back. The list refreshes every two minutes and shows at most 100 issues. Reopening a project shows the last list and issue body immediately, then refreshes them in the background.
 

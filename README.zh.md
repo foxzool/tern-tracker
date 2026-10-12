@@ -58,13 +58,14 @@ tern plugin link .
 | --- | --- |
 | ↑↓ 或 k j | 移动 |
 | ⏎ 或 o | 查看正文和评论 |
+| # 或标题 | 在网页打开这条 issue 或 pull request |
 | b | 在浏览器打开 |
 | y | 复制链接 |
 | r | 刷新 |
 | s | 切换状态。Issue 是打开 / 已关闭 / 全部。Pull request 是打开 / 已合并 / 已关闭 / 全部 |
 | p | 在 issue 和 pull request 之间切换 |
 
-命令面板里的「打开当前项目的 Pull requests」在同一个 pane 里显示 pull request。`n` 只创建 issue，不创建 pull request。
+命令面板里的「打开当前项目的 Pull requests」在同一个 pane 里显示 pull request。Issues 和 Pull requests 上的数字是打开的数量，达到 100 条时显示 `+`。`n` 只创建 issue，不创建 pull request。
 
 正文里按 esc 返回。列表每两分钟刷新一次，最多显示 100 条。再次打开同一项目时，先显示上次的列表和正文，再在后台刷新。
 

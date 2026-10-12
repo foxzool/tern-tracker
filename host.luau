@@ -81,6 +81,7 @@ type State = {
 	cursor: string?,
 	kind: string,
 	filter: string,
+	open_count: { [string]: number },
 	loading: boolean,
 	fetched: number?,
 	problem: Problem?,
@@ -505,6 +506,7 @@ local function resolve(state: State)
 					state.viewing = nil
 					state.detail = nil
 					state.detail_problem = nil
+					state.open_count = {}
 					apply_list_cache(state)
 				elseif state.viewing then
 					load_detail(state, state.viewing)
@@ -534,6 +536,60 @@ local function resolve(state: State)
 	end
 end
 
+local open_seq: { [string]: number } = {}
+
+local function open_seq_key(repo: string, kind: string): string
+	return repo .. "|" .. kind
+end
+
+local function next_open_seq(repo: string, kind: string): number
+	local key = open_seq_key(repo, kind)
+	local n = (open_seq[key] or 0) + 1
+	open_seq[key] = n
+	return n
+end
+
+local function open_seq_current(repo: string, kind: string): number
+	return open_seq[open_seq_key(repo, kind)] or 0
+end
+
+local function fetch_open_count(state: State, kind: string)
+	if not alive(state) or not state.repo or not state.repo_ok then
+		return
+	end
+	if state.kind == kind and state.filter == "open" then
+		return
+	end
+	local repo = state.repo :: string
+	local seq = next_open_seq(repo, kind)
+	run_gh({
+		gh_noun(kind),
+		"list",
+		"--repo",
+		repo,
+		"--state",
+		"open",
+		"--limit",
+		tostring(LIST_LIMIT),
+		"--json",
+		LIST_FIELDS,
+	}, state.cwd, function(result)
+		if open_seq_current(repo, kind) ~= seq then
+			return
+		end
+		local parsed = if result.status == 0 then parse_issues(result.stdout) else nil
+		if not parsed then
+			return
+		end
+		cache.list_put(repo, kind, "open", parsed)
+		if not alive(state) or state.repo ~= repo then
+			return
+		end
+		state.open_count[kind] = #parsed
+		state.cx:render()
+	end)
+end
+
 refresh = function(state: State)
 	if not alive(state) or state.loading or not state.repo or not state.repo_ok then
 		return
@@ -543,6 +599,7 @@ refresh = function(state: State)
 	local kind = state.kind
 	local repo = state.repo :: string
 	local filter = state.filter
+	local seq = if filter == "open" then next_open_seq(repo, kind) else nil
 	local spawn_error = run_gh({
 		gh_noun(kind),
 		"list",
@@ -555,11 +612,18 @@ refresh = function(state: State)
 		"--json",
 		LIST_FIELDS,
 	}, state.cwd, function(result)
+		local stale = seq ~= nil and open_seq_current(repo, kind) ~= seq
 		local parsed = if result.status == 0 then parse_issues(result.stdout) else nil
-		if parsed then
+		if parsed and not stale then
 			cache.list_put(repo, kind, filter, parsed)
+			if filter == "open" and alive(state) and state.repo == repo then
+				state.open_count[kind] = #parsed
+			end
 		end
 		if not alive(state) or state.gen ~= gen or state.kind ~= kind then
+			if alive(state) and parsed and filter == "open" and not stale then
+				state.cx:render()
+			end
 			return
 		end
 		state.loading = false
@@ -583,6 +647,10 @@ refresh = function(state: State)
 	if spawn_error then
 		state.loading = false
 		state.problem = { kind = "missing", text = "", key = "cannot_start_gh", detail = spawn_error }
+	end
+	fetch_open_count(state, if kind == "pull" then "issue" else "pull")
+	if filter ~= "open" then
+		fetch_open_count(state, kind)
 	end
 end
 
@@ -707,11 +775,41 @@ local function list_lines(cx: BlockCx): number
 	return math.max(4, math.floor((cx.rows - 6) * 0.72))
 end
 
+local function open_count_of(state: State, kind: string): number?
+	local known = state.open_count[kind]
+	if known ~= nil then
+		return known
+	end
+	if state.kind == kind and state.filter == "open" and state.issues then
+		return #state.issues
+	end
+	if state.repo then
+		local hit = cache.list_get(state.repo, kind, "open")
+		if hit then
+			return #hit.issues
+		end
+	end
+	return nil
+end
+
+local function kind_label(state: State, id: string): string
+	local label = t("kind_" .. id)
+	local n = open_count_of(state, id)
+	if n == nil then
+		return label
+	end
+	local text = tostring(n)
+	if n >= LIST_LIMIT then
+		text ..= "+"
+	end
+	return label .. " " .. text
+end
+
 local function filter_row(state: State): Node
 	local badges: { Node } = {}
 	for _, id in { "issue", "pull" } do
 		local tone = if id == state.kind then "accent" else "neutral"
-		local node = ui.badge(t("kind_" .. id), tone)
+		local node = ui.badge(kind_label(state, id), tone)
 		local props: { [string]: any } = node.p or {}
 		props.actions = { click = "kind=" .. id }
 		props.key = "kind-" .. id
@@ -740,8 +838,9 @@ local function list_view(state: State): Node
 	local items: { Item } = {}
 	for _, issue in state.shown do
 		local label: { Span } = {
-			ui.span("#" .. issue.number .. "  ", "muted num"),
-			ui.span(issue.title),
+			ui.link("#" .. issue.number, issue.url, "muted num"),
+			ui.span("  "),
+			ui.link(issue.title, issue.url),
 		}
 		local value: { Span } = {
 			ui.span("@" .. issue.author .. "  ", "muted"),
@@ -840,8 +939,8 @@ local function detail_view(state: State): Node
 	local merged = detail.state == "MERGED"
 	local closed = detail.state == "CLOSED" or merged
 	local head: { Span } = {
-		ui.span("#" .. detail.number .. "  ", "muted num"),
-		ui.span(detail.title, "strong"),
+		ui.link("#" .. detail.number .. "  ", detail.url, "muted num"),
+		ui.link(detail.title, detail.url, "strong"),
 	}
 	local badges: { Node } = {
 		ui.badge(
@@ -857,6 +956,7 @@ local function detail_view(state: State): Node
 	end
 	local children: { Node } = {
 		ui.row(badges),
+		ui.text({ ui.link(detail.url, detail.url) }),
 		ui.kv({
 			{ t("author"), "@" .. detail.author },
 			{ t("updated"), age(detail.updated) },
@@ -1244,6 +1344,7 @@ tern.block.define("list", {
 			cursor = nil,
 			kind = kind,
 			filter = filter,
+			open_count = {},
 			loading = false,
 			fetched = nil,
 			problem = nil,
