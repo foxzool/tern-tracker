@@ -1,0 +1,14 @@
+schema = 1
+id = "gh-issues"
+name = "GitHub Issues"
+version = "0.1.0"
+description = "查看当前项目的 GitHub issue。"
+icon = "list"
+host = "host.luau"
+window = "window.luau"
+
+[[blocks]]
+id = "list"
+title = "GitHub Issues"
+icon = "list"
+palette = false
