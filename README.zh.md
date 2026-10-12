@@ -2,7 +2,7 @@
 
 查看当前项目的 Tracker。
 
-插件读取聚焦 pane 的目录，用 `gh repo view` 识别 GitHub 仓库，再列出这个仓库的 issue。现在只接 GitHub issue。
+插件读取聚焦 pane 的目录，用 `gh repo view` 识别 GitHub 仓库，再列出这个仓库的 issue 和 pull request。GitLab 和 Linear 还没接。
 
 [English](README.md)
 
@@ -67,3 +67,7 @@ tern plugin link .
 命令面板里的「打开当前项目的 Pull requests」在同一个 pane 里显示 pull request。`n` 只创建 issue，不创建 pull request。
 
 正文里按 esc 返回。列表每两分钟刷新一次，最多显示 100 条。再次打开同一项目时，先显示上次的列表和正文，再在后台刷新。
+
+## 授权
+
+Apache License 2.0。见 [LICENSE](LICENSE)。

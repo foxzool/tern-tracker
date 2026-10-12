@@ -96,6 +96,7 @@ local STR = {
 		current_project = "this project",
 		loading_issues = "Loading %s %s issues…",
 		loading_pulls = "Loading %s %s pull requests…",
+		identifying = "Identifying %s (%s)…",
 	},
 	zh = {
 		cmd_open = "打开当前项目的 Tracker",
@@ -190,6 +191,7 @@ local STR = {
 		current_project = "当前项目",
 		loading_issues = "正在加载 %s 的%s issue…",
 		loading_pulls = "正在加载 %s 的%s pull request…",
+		identifying = "正在识别 %s（%s）…",
 	},
 }
 

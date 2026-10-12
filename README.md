@@ -2,7 +2,7 @@
 
 View the current project's tracker.
 
-The plugin reads the focused pane's directory, identifies the GitHub repository with `gh repo view`, and lists that repository's issues. GitHub issues are the only source for now.
+The plugin reads the focused pane's directory, identifies the GitHub repository with `gh repo view`, and lists that repository's issues and pull requests. GitLab and Linear are not connected yet.
 
 [中文](README.zh.md)
 
@@ -67,3 +67,7 @@ List:
 `Open pull requests for this project` opens the same pane on pull requests. `n` creates an issue, not a pull request.
 
 Press esc in the detail view to go back. The list refreshes every two minutes and shows at most 100 issues. Reopening a project shows the last list and issue body immediately, then refreshes them in the background.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
