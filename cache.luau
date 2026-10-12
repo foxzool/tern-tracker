@@ -1,7 +1,7 @@
 --!strict
--- 仓库、列表和详情的磁盘缓存。打开 block 时先画出上次的结果，再后台刷新。
+-- 来源、列表和详情的磁盘缓存。打开 block 时先画出上次的结果，再后台刷新。
 
-local PATH = tern.plugin.data .. "/issues-cache.json"
+local PATH = tern.plugin.data .. "/cache.json"
 local MAX_DETAILS = 40
 
 type RepoHit = { repo: string, url: string?, at: number }
@@ -13,12 +13,12 @@ local lists: { [string]: ListHit } = {}
 local details: { [string]: DetailHit } = {}
 local loaded = false
 
-local function list_key(repo: string, filter: string): string
-	return repo .. "|" .. filter
+local function list_key(repo: string, kind: string, filter: string): string
+	return repo .. "|" .. kind .. "|" .. filter
 end
 
-local function detail_key(repo: string, number: number): string
-	return repo .. "#" .. tostring(number)
+local function detail_key(repo: string, kind: string, number: number): string
+	return repo .. "|" .. kind .. "#" .. tostring(number)
 end
 
 local function load()
@@ -98,33 +98,33 @@ local function repo_put(cwd: string, repo: string, url: string?)
 	save()
 end
 
-local function list_get(repo: string, filter: string): ListHit?
+local function list_get(repo: string, kind: string, filter: string): ListHit?
 	load()
-	local hit = lists[list_key(repo, filter)]
+	local hit = lists[list_key(repo, kind, filter)]
 	if type(hit) ~= "table" or type(hit.issues) ~= "table" then
 		return nil
 	end
 	return hit
 end
 
-local function list_put(repo: string, filter: string, issues: { any })
+local function list_put(repo: string, kind: string, filter: string, issues: { any })
 	load()
-	lists[list_key(repo, filter)] = { issues = issues, at = os.time() }
+	lists[list_key(repo, kind, filter)] = { issues = issues, at = os.time() }
 	save()
 end
 
-local function detail_get(repo: string, number: number): DetailHit?
+local function detail_get(repo: string, kind: string, number: number): DetailHit?
 	load()
-	local hit = details[detail_key(repo, number)]
+	local hit = details[detail_key(repo, kind, number)]
 	if type(hit) ~= "table" or type(hit.detail) ~= "table" then
 		return nil
 	end
 	return hit
 end
 
-local function detail_put(repo: string, number: number, detail: any)
+local function detail_put(repo: string, kind: string, number: number, detail: any)
 	load()
-	details[detail_key(repo, number)] = { detail = detail, at = os.time() }
+	details[detail_key(repo, kind, number)] = { detail = detail, at = os.time() }
 	trim_details()
 	save()
 end

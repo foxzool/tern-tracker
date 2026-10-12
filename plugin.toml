@@ -1,14 +1,14 @@
 schema = 1
-id = "gh-issues"
-name = "GitHub Issues"
+id = "tracker"
+name = "Tracker"
 version = "0.1.0"
-description = "View GitHub issues for the current project."
+description = "View the current project's tracker."
 icon = "list"
 host = "host.luau"
 window = "window.luau"
 
 [[blocks]]
 id = "list"
-title = "GitHub Issues"
+title = "Tracker"
 icon = "list"
 palette = false

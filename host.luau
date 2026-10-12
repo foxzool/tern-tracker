@@ -1,5 +1,5 @@
 --!strict
--- 当前项目的 GitHub issue。
+-- 当前项目的 Tracker。现在只接 GitHub issue。
 -- 目录来自启动参数，否则用 block 自己的 cwd。
 -- `gh repo view` 识别 owner/repo，`gh issue list` 拉列表。
 --
@@ -79,6 +79,7 @@ type State = {
 	issues: { Issue }?,
 	shown: { Issue },
 	cursor: string?,
+	kind: string,
 	filter: string,
 	loading: boolean,
 	fetched: number?,
@@ -100,6 +101,25 @@ type State = {
 local running: { [number]: State } = {}
 
 local FILTER_NEXT = { open = "closed", closed = "all", all = "open" }
+local PULL_FILTER_NEXT = { open = "merged", merged = "closed", closed = "all", all = "open" }
+
+local function filter_allowed(kind: string, filter: string): boolean
+	if filter == "open" or filter == "closed" or filter == "all" then
+		return true
+	end
+	return kind == "pull" and filter == "merged"
+end
+
+local function filters_of(kind: string): { string }
+	if kind == "pull" then
+		return { "open", "merged", "closed", "all" }
+	end
+	return { "open", "closed", "all" }
+end
+
+local function gh_noun(kind: string): string
+	return if kind == "pull" then "pr" else "issue"
+end
 
 local function filter_word(id: string): string
 	return t("filter_" .. id)
@@ -413,7 +433,7 @@ local function apply_list_cache(state: State)
 	if not state.repo then
 		return
 	end
-	local hit = cache.list_get(state.repo, state.filter)
+	local hit = cache.list_get(state.repo, state.kind, state.filter)
 	if not hit then
 		return
 	end
@@ -520,10 +540,11 @@ refresh = function(state: State)
 	end
 	state.loading = true
 	local gen = state.gen
+	local kind = state.kind
 	local repo = state.repo :: string
 	local filter = state.filter
 	local spawn_error = run_gh({
-		"issue",
+		gh_noun(kind),
 		"list",
 		"--repo",
 		repo,
@@ -534,28 +555,28 @@ refresh = function(state: State)
 		"--json",
 		LIST_FIELDS,
 	}, state.cwd, function(result)
-		if not alive(state) or state.gen ~= gen then
+		local parsed = if result.status == 0 then parse_issues(result.stdout) else nil
+		if parsed then
+			cache.list_put(repo, kind, filter, parsed)
+		end
+		if not alive(state) or state.gen ~= gen or state.kind ~= kind then
 			return
 		end
 		state.loading = false
 		if result.status ~= 0 then
 			state.problem = problem_of(result, "cannot_load")
+		elseif parsed then
+			state.issues = parsed
+			state.problem = nil
+			state.fetched = os.time()
+			resort(state)
 		else
-			local issues = parse_issues(result.stdout)
-			if issues then
-				state.issues = issues
-				state.problem = nil
-				state.fetched = os.time()
-				cache.list_put(repo, filter, issues)
-				resort(state)
-			else
-				state.problem = {
-					kind = "failed",
-					text = "",
-					key = "not_a_list",
-					detail = first_lines(result.stdout, 4),
-				}
-			end
+			state.problem = {
+				kind = "failed",
+				text = "",
+				key = "not_a_list",
+				detail = first_lines(result.stdout, 4),
+			}
 		end
 		state.cx:render()
 	end)
@@ -584,7 +605,8 @@ load_detail = function(state: State, number: number)
 		return
 	end
 	local repo = state.repo :: string
-	local cached = cache.detail_get(repo, number)
+	local kind = state.kind
+	local cached = cache.detail_get(repo, kind, number)
 	if not state.repo_ok then
 		if not cached then
 			state.cx:toast("info", t("repo_unconfirmed"))
@@ -600,7 +622,7 @@ load_detail = function(state: State, number: number)
 	state.detail_problem = nil
 	state.detail = if cached then cached.detail else nil
 	local spawn_error = run_gh({
-		"issue",
+		gh_noun(kind),
 		"view",
 		tostring(number),
 		"--repo",
@@ -608,25 +630,25 @@ load_detail = function(state: State, number: number)
 		"--json",
 		VIEW_FIELDS,
 	}, state.cwd, function(result)
-		if not alive(state) or state.gen ~= gen or state.viewing ~= number then
+		local detail = if result.status == 0 then parse_detail(result.stdout) else nil
+		if detail then
+			cache.detail_put(repo, kind, number, detail)
+		end
+		if not alive(state) or state.gen ~= gen or state.kind ~= kind or state.viewing ~= number then
 			return
 		end
 		if result.status ~= 0 then
 			state.detail_problem = problem_of(result, "cannot_load_one")
+		elseif detail then
+			state.detail = detail
+			state.detail_problem = nil
 		else
-			local detail = parse_detail(result.stdout)
-			if detail then
-				state.detail = detail
-				state.detail_problem = nil
-				cache.detail_put(repo, number, detail)
-			else
-				state.detail_problem = {
-					kind = "failed",
-					text = "",
-					key = "not_one_issue",
-					detail = first_lines(result.stdout, 4),
-				}
-			end
+			state.detail_problem = {
+				kind = "failed",
+				text = "",
+				key = "not_one_issue",
+				detail = first_lines(result.stdout, 4),
+			}
 		end
 		state.cx:render()
 	end)
@@ -674,7 +696,7 @@ local function problem_view(problem: Problem, cwd: string?): Node
 		table.insert(buttons, button(t("install"), "install", "neutral"))
 	end
 	table.insert(children, ui.row(buttons))
-	local card = ui.card(heads[problem.kind] or "GitHub Issues", children)
+	local card = ui.card(heads[problem.kind] or "Tracker", children)
 	local props: { [string]: any } = card.p or {}
 	props.tone = "error"
 	card.p = props
@@ -687,7 +709,16 @@ end
 
 local function filter_row(state: State): Node
 	local badges: { Node } = {}
-	for _, id in { "open", "closed", "all" } do
+	for _, id in { "issue", "pull" } do
+		local tone = if id == state.kind then "accent" else "neutral"
+		local node = ui.badge(t("kind_" .. id), tone)
+		local props: { [string]: any } = node.p or {}
+		props.actions = { click = "kind=" .. id }
+		props.key = "kind-" .. id
+		node.p = props
+		table.insert(badges, node)
+	end
+	for _, id in filters_of(state.kind) do
 		local tone = if id == state.filter then "accent" else "neutral"
 		local node = ui.badge(filter_word(id), tone)
 		local props: { [string]: any } = node.p or {}
@@ -698,7 +729,8 @@ local function filter_row(state: State): Node
 	end
 	if state.repo then
 		local repo = state.repo :: string
-		local href = if state.repo_url then state.repo_url .. "/issues" else "https://github.com/" .. repo .. "/issues"
+		local section = if state.kind == "pull" then "/pulls" else "/issues"
+		local href = if state.repo_url then state.repo_url .. section else "https://github.com/" .. repo .. section
 		table.insert(badges, ui.text({ ui.link(repo, href, "muted") }))
 	end
 	return ui.row(badges)
@@ -730,8 +762,8 @@ local function list_view(state: State): Node
 			label = label,
 			detail = if #detail > 0 then detail else nil,
 			value = value,
-			icon = if issue.state == "CLOSED" then "check" else "hash",
-			tone = if issue.state == "CLOSED" then "muted" else nil,
+			icon = if issue.state == "CLOSED" or issue.state == "MERGED" then "check" else "hash",
+			tone = if issue.state == "CLOSED" or issue.state == "MERGED" then "muted" else nil,
 		})
 	end
 	local list = ui.list(items)
@@ -741,10 +773,16 @@ local function list_view(state: State): Node
 		props.key = issue.key
 		kids[i].p = props
 	end
-	local empty = if state.filter == "closed"
-		then t("empty_closed")
-		elseif state.filter == "all" then t("empty_all")
-		else t("empty_open")
+	local empty_key = if state.kind == "pull"
+		then if state.filter == "merged"
+			then "empty_merged"
+			elseif state.filter == "closed" then "empty_closed_pull"
+			elseif state.filter == "all" then "empty_all_pull"
+			else "empty_open_pull"
+		elseif state.filter == "closed" then "empty_closed"
+		elseif state.filter == "all" then "empty_all"
+		else "empty_open"
+	local empty = t(empty_key)
 	local props: { [string]: any } = list.p or {}
 	props.key = "queue"
 	props.selected = if state.cursor then LIST_ID .. state.cursor else nil
@@ -764,8 +802,9 @@ local function dock_view(state: State): Node
 	end
 	local status: { Span } = {}
 	if state.issues then
-		local count_key = if state.filter == "closed"
-			then "count_closed"
+		local count_key = if state.filter == "merged"
+			then "count_merged"
+			elseif state.filter == "closed" then "count_closed"
 			elseif state.filter == "all" then "count_all"
 			else "count_open"
 		table.insert(status, ui.span(tf(count_key, #state.shown), "strong"))
@@ -798,13 +837,17 @@ local function detail_view(state: State): Node
 		end
 		return ui.progress(nil, tf("loading_one", tostring(state.viewing)))
 	end
-	local closed = detail.state == "CLOSED"
+	local merged = detail.state == "MERGED"
+	local closed = detail.state == "CLOSED" or merged
 	local head: { Span } = {
 		ui.span("#" .. detail.number .. "  ", "muted num"),
 		ui.span(detail.title, "strong"),
 	}
 	local badges: { Node } = {
-		ui.badge(if closed then t("badge_closed") else t("badge_open"), if closed then "muted" else "success"),
+		ui.badge(
+			if merged then t("badge_merged") elseif closed then t("badge_closed") else t("badge_open"),
+			if merged then "accent" elseif closed then "muted" else "success"
+		),
 	}
 	for i, name in detail.labels do
 		if i > 6 then
@@ -891,10 +934,7 @@ local function move(state: State, to: number)
 end
 
 local function set_filter(state: State, filter: string)
-	if filter ~= "open" and filter ~= "closed" and filter ~= "all" then
-		return
-	end
-	if filter == state.filter then
+	if not filter_allowed(state.kind, filter) or filter == state.filter then
 		return
 	end
 	state.filter = filter
@@ -915,6 +955,34 @@ local function set_filter(state: State, filter: string)
 	state.problem = nil
 	apply_list_cache(state)
 	refresh(state)
+end
+
+local function set_kind(state: State, kind: string)
+	if kind ~= "issue" and kind ~= "pull" then
+		return
+	end
+	if state.kind == kind then
+		return
+	end
+	state.kind = kind
+	if not filter_allowed(kind, state.filter) then
+		state.filter = "open"
+	end
+	state.gen += 1
+	state.loading = false
+	state.issues = nil
+	state.shown = {}
+	state.cursor = nil
+	state.viewing = nil
+	state.detail = nil
+	state.detail_problem = nil
+	state.composing = false
+	state.problem = nil
+	apply_list_cache(state)
+	if state.repo_ok then
+		refresh(state)
+	end
+	state.cx:render()
 end
 
 local function retry(state: State)
@@ -951,6 +1019,9 @@ local function begin_compose(state: State)
 	if state.creating or not state.repo_ok then
 		return
 	end
+	if state.kind ~= "issue" then
+		set_kind(state, "issue")
+	end
 	state.composing = true
 	state.viewing = nil
 	state.detail = nil
@@ -961,8 +1032,8 @@ local function begin_compose(state: State)
 	state.focus_field = "title"
 	state.creating = false
 	state.create_problem = nil
+	state.cx:render()
 end
-
 local function cancel_compose(state: State)
 	if state.creating then
 		return
@@ -1153,8 +1224,14 @@ tern.block.define("list", {
 			retire(previous)
 		end
 		local cwd = if type(args[1]) == "string" and args[1] ~= "" then args[1] else cx.cwd
+		local kind = "issue"
+		if args[2] == "pull" then
+			kind = "pull"
+		elseif type(saved) == "table" and (saved.kind == "issue" or saved.kind == "pull") then
+			kind = saved.kind
+		end
 		local filter = "open"
-		if type(saved) == "table" and (saved.filter == "open" or saved.filter == "closed" or saved.filter == "all") then
+		if type(saved) == "table" and type(saved.filter) == "string" and filter_allowed(kind, saved.filter) then
 			filter = saved.filter
 		end
 		local state: State = {
@@ -1165,6 +1242,7 @@ tern.block.define("list", {
 			issues = nil,
 			shown = {},
 			cursor = nil,
+			kind = kind,
 			filter = filter,
 			loading = false,
 			fetched = nil,
@@ -1193,20 +1271,20 @@ tern.block.define("list", {
 	title = function(state: State): string?
 		if state.viewing then
 			if state.detail then
-				return "Issues · #" .. state.detail.number
+				return "Tracker · #" .. state.detail.number
 			end
-			return "Issues · #" .. state.viewing
+			return "Tracker · #" .. state.viewing
 		end
 		if state.repo then
 			if state.issues then
-				return "Issues · " .. state.repo .. " (" .. #state.shown .. ")"
+				return "Tracker · " .. state.repo .. " (" .. #state.shown .. ")"
 			end
-			return "Issues · " .. state.repo
+			return "Tracker · " .. state.repo
 		end
 		if state.cwd then
-			return "Issues · " .. basename(state.cwd)
+			return "Tracker · " .. basename(state.cwd)
 		end
-		return "Issues"
+		return "Tracker"
 	end,
 
 	view = function(state: State, cx: BlockCx): BlockView
@@ -1232,7 +1310,7 @@ tern.block.define("list", {
 			local where = if state.repo then state.repo elseif state.cwd then basename(state.cwd) else t("current_project")
 			local word = filter_word(state.filter)
 			local label = if state.repo
-				then tf("loading_issues", where, word)
+				then tf(if state.kind == "pull" then "loading_pulls" else "loading_issues", where, word)
 				else tf("identifying", where, word)
 			main = ui.progress(nil, label)
 		end
@@ -1288,9 +1366,14 @@ tern.block.define("list", {
 		elseif name == "r" then
 			retry(state)
 		elseif name == "s" then
-			set_filter(state, FILTER_NEXT[state.filter] or "open")
+			local cycle = if state.kind == "pull" then PULL_FILTER_NEXT else FILTER_NEXT
+			set_filter(state, cycle[state.filter] or "open")
+		elseif name == "p" then
+			set_kind(state, if state.kind == "pull" then "issue" else "pull")
 		elseif name == "n" then
-			if not state.repo_ok then
+			if state.kind == "pull" then
+				cx:toast("info", t("pull_no_create"))
+			elseif not state.repo_ok then
 				cx:toast("info", t("repo_unconfirmed"))
 			elseif state.repo then
 				begin_compose(state)
@@ -1325,6 +1408,10 @@ tern.block.define("list", {
 			copy_url(cx, current_url(state))
 		elseif ev.ev == "action" and ev.act == "filter" and type(ev.value) == "string" then
 			set_filter(state, ev.value)
+		elseif ev.ev == "action" and ev.act == "kind" and type(ev.value) == "string" then
+			set_kind(state, ev.value)
+		elseif ev.ev == "action" and ev.act == "pulls" then
+			set_kind(state, "pull")
 		elseif (ev.ev == "select" or ev.ev == "activate") and type(ev.item) == "string" then
 			if string.sub(ev.item, 1, #LIST_ID) == LIST_ID then
 				state.cursor = string.sub(ev.item, #LIST_ID + 1)
@@ -1339,6 +1426,6 @@ tern.block.define("list", {
 	end,
 
 	save = function(state: State): any
-		return { filter = state.filter }
+		return { filter = state.filter, kind = state.kind }
 	end,
 })

@@ -1,7 +1,8 @@
 --!strict
--- 从当前聚焦 pane 的目录打开 issue 列表。
+-- 从当前聚焦 pane 的目录打开 Tracker。
 
-local KIND = "gh-issues.list"
+local KIND = "tracker.list"
+local TITLE = "Tracker"
 local i18n = require("./i18n")
 
 local function project_cwd(cx: WindowCx): string?
@@ -16,22 +17,24 @@ local function project_cwd(cx: WindowCx): string?
 	return nil
 end
 
-local function open_issues(cx: WindowCx, compose: boolean?)
+local function open_tracker(cx: WindowCx, mode: string?)
 	local cwd = project_cwd(cx)
 	if not cwd then
 		cx:toast("error", i18n.t("no_project"), i18n.t("no_project_sub"))
 		return
 	end
 	local args = { cwd }
-	if compose then
-		table.insert(args, "new")
+	if mode == "new" or mode == "pull" then
+		table.insert(args, mode)
 	end
 	for _, pane in cx.session:panes() do
 		local title = pane.title
-		if pane.cwd == cwd and type(title) == "string" and string.sub(title, 1, 6) == "Issues" then
+		if pane.cwd == cwd and type(title) == "string" and string.sub(title, 1, #TITLE) == TITLE then
 			cx.layout:focus(pane.pane)
-			if compose then
+			if mode == "new" then
 				cx.session:event(pane.pane, { ev = "action", act = "compose" })
+			elseif mode == "pull" then
+				cx.session:event(pane.pane, { ev = "action", act = "pulls" })
 			end
 			return
 		end
@@ -55,7 +58,7 @@ end
 local function refresh_open_blocks(cx: WindowCx)
 	for _, pane in cx.session:panes() do
 		local title = pane.title
-		if type(title) == "string" and string.sub(title, 1, 6) == "Issues" then
+		if type(title) == "string" and string.sub(title, 1, #TITLE) == TITLE then
 			cx.session:event(pane.pane, { ev = "action", act = "lang" })
 		end
 	end
@@ -68,7 +71,15 @@ local function register_commands()
 		icon = "list",
 		keys = { "alt+shift+cmd+i" },
 		run = function(cx)
-			open_issues(cx, false)
+			open_tracker(cx, nil)
+		end,
+	})
+	tern.command({
+		id = "pulls",
+		title = i18n.t("cmd_pulls"),
+		icon = "diff",
+		run = function(cx)
+			open_tracker(cx, "pull")
 		end,
 	})
 	tern.command({
@@ -76,7 +87,7 @@ local function register_commands()
 		title = i18n.t("cmd_create"),
 		icon = "plus",
 		run = function(cx)
-			open_issues(cx, true)
+			open_tracker(cx, "new")
 		end,
 	})
 	tern.command({
@@ -95,13 +106,13 @@ end
 register_commands()
 
 -- 右上角图标。Tern 没有工具栏按钮 API，可点击的 chrome 只有状态栏分段。
--- 分段本身在状态栏里，CSS 把它固定到标题栏右侧，点它打开 issue 列表。
+-- 分段本身在状态栏里，CSS 把它固定到标题栏右侧，点它打开 Tracker。
 tern.chrome.status(function(_pane)
 	return {
 		{
 			text = " ",
 			icon = "hash",
-			command = "plugin.gh-issues.open",
+			command = "plugin.tracker.open",
 		},
 	}
 end)
@@ -118,7 +129,7 @@ tern.timer(0, function(cx)
 end)
 
 tern.css("toolbar", [[
-#statusline .sl-plugin[data-plugin="gh-issues"] {
+#statusline .sl-plugin[data-plugin="tracker"] {
 	position: fixed;
 	top: 6px;
 	right: 200px;
@@ -138,12 +149,12 @@ tern.css("toolbar", [[
 	color: var(--t2, currentColor);
 	background: transparent;
 }
-#statusline .sl-plugin[data-plugin="gh-issues"] .ico {
+#statusline .sl-plugin[data-plugin="tracker"] .ico {
 	width: 15px;
 	height: 15px;
 	flex: none;
 }
-#statusline .sl-plugin[data-plugin="gh-issues"]:hover {
+#statusline .sl-plugin[data-plugin="tracker"]:hover {
 	background: var(--l2, rgba(128, 128, 128, 0.16));
 	color: var(--t1, currentColor);
 }
