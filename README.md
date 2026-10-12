@@ -70,4 +70,4 @@ Press esc in the detail view to go back. The list refreshes every two minutes an
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+Apache License 2.0. Copyright 2026 ZoOL. See [LICENSE](LICENSE).

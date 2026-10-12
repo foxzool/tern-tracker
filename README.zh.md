@@ -70,4 +70,4 @@ tern plugin link .
 
 ## 授权
 
-Apache License 2.0。见 [LICENSE](LICENSE)。
+Apache License 2.0。版权所有 2026 ZoOL。见 [LICENSE](LICENSE)。
