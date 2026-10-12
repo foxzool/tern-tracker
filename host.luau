@@ -7,6 +7,10 @@
 -- 正文：esc 返回，b 或 ⏎ 浏览器，y 复制，r 重载。
 
 local ui = tern.ui
+local i18n = require("./i18n")
+local cache = require("./cache")
+local t = i18n.t
+local tf = i18n.tf
 
 local POLL_MS = 2 * 60 * 1000
 local GH_TIMEOUT_MS = 30 * 1000
@@ -63,13 +67,15 @@ type Detail = {
 	comments: { Comment },
 }
 
-type Problem = { kind: string, text: string, detail: string? }
+type Problem = { kind: string, text: string, detail: string?, key: string? }
 
 type State = {
 	cx: BlockCx,
 	cwd: string?,
 	repo: string?,
 	repo_url: string?,
+	repo_ok: boolean,
+	confirm_gen: number,
 	issues: { Issue }?,
 	shown: { Issue },
 	cursor: string?,
@@ -94,7 +100,17 @@ type State = {
 local running: { [number]: State } = {}
 
 local FILTER_NEXT = { open = "closed", closed = "all", all = "open" }
-local FILTER_LABEL = { open = "打开", closed = "已关闭", all = "全部" }
+
+local function filter_word(id: string): string
+	return t("filter_" .. id)
+end
+
+local function problem_text(problem: Problem): string
+	if problem.key then
+		return t(problem.key)
+	end
+	return problem.text
+end
 
 local function retire(state: State)
 	if running[state.cx.pane] == state then
@@ -119,6 +135,7 @@ local function retire(state: State)
 	state.creating = false
 	state.create_problem = nil
 	state.want_compose = false
+	state.repo_ok = false
 	state.focus_field = nil
 end
 
@@ -152,16 +169,16 @@ local function epoch(iso: string): number?
 	return days * 86400 + (tonumber(hh) :: number) * 3600 + (tonumber(mm) :: number) * 60 + (tonumber(ss) :: number)
 end
 
-local function age(t: number): string
-	local s = math.max(0, os.time() - t)
+local function age(timestamp: number): string
+	local s = math.max(0, os.time() - timestamp)
 	if s < 60 then
-		return "刚刚"
+		return t("age_now")
 	elseif s < 3600 then
-		return (s // 60) .. " 分钟前"
+		return tf("age_min", s // 60)
 	elseif s < 86400 then
-		return (s // 3600) .. " 小时前"
+		return tf("age_hour", s // 3600)
 	end
-	return (s // 86400) .. " 天前"
+	return tf("age_day", s // 86400)
 end
 
 local function first_lines(text: string, n: number): string
@@ -308,29 +325,30 @@ local function auth_error(result: ProcessResult): boolean
 		or string.find(err, "HTTP 401", 1, true) ~= nil
 end
 
-local function problem_of(result: ProcessResult, fallback: string): Problem
+local function problem_of(result: ProcessResult, fallback_key: string): Problem
 	if result.timed_out then
-		return { kind = "failed", text = "gh 在 30 秒内没有返回。" }
+		return { kind = "failed", text = "", key = "gh_timeout" }
 	end
 	if auth_error(result) then
-		return { kind = "auth", text = "GitHub CLI 未登录。", detail = first_lines(result.stderr, 3) }
+		return { kind = "auth", text = "", key = "gh_auth", detail = first_lines(result.stderr, 3) }
 	end
 	local err = result.stderr
 	if string.find(err, "not a git repository", 1, true) then
-		return { kind = "norepo", text = "当前目录不是 Git 仓库。", detail = first_lines(err, 3) }
+		return { kind = "norepo", text = "", key = "not_git", detail = first_lines(err, 3) }
 	end
 	if string.find(err, "no git remotes", 1, true) or string.find(err, "known GitHub host", 1, true) then
-		return { kind = "notgithub", text = "这个仓库没有 GitHub 远程。", detail = first_lines(err, 4) }
+		return { kind = "notgithub", text = "", key = "not_github", detail = first_lines(err, 4) }
 	end
 	return {
 		kind = "failed",
-		text = fallback,
+		text = "",
+		key = fallback_key,
 		detail = first_lines(if err ~= "" then err else result.stdout, 8),
 	}
 end
 
 local function run_gh(args: { string }, cwd: string?, done: (ProcessResult) -> ()): string?
-	local last = "这台机器的 PATH 上没有 gh"
+	local last = t("gh_missing")
 	for _, gh in GH do
 		if gh == "gh" or tern.fs.exists(gh) then
 			local argv: { string } = { gh }
@@ -389,6 +407,21 @@ end
 
 local refresh: (State) -> ()
 local poll: (State) -> ()
+local load_detail: (State, number) -> ()
+
+local function apply_list_cache(state: State)
+	if not state.repo then
+		return
+	end
+	local hit = cache.list_get(state.repo, state.filter)
+	if not hit then
+		return
+	end
+	state.issues = hit.issues
+	state.fetched = hit.at
+	state.problem = nil
+	resort(state)
+end
 
 local function resolve(state: State)
 	if not alive(state) or state.loading then
@@ -398,24 +431,40 @@ local function resolve(state: State)
 	if not cwd or cwd == "" then
 		state.problem = {
 			kind = "norepo",
-			text = "没有项目目录。",
-			detail = "从项目目录里的 pane 打开。",
+			text = "",
+			key = "no_cwd",
+			detail = "",
 		}
 		return
 	end
-	state.loading = true
-	local gen = state.gen
+	local known = cache.repo_get(cwd)
+	state.repo_ok = false
+	state.confirm_gen += 1
+	local confirm_gen = state.confirm_gen
+	if known then
+		-- 缓存只用于展示。确认完成前不能拿这个 slug 去创建。
+		state.repo = known.repo
+		state.repo_url = known.url
+		apply_list_cache(state)
+	else
+		state.loading = true
+	end
 	local spawn_error = run_gh({ "repo", "view", "--json", "nameWithOwner,url" }, cwd, function(result)
-		if not alive(state) or state.gen ~= gen then
+		if not alive(state) or state.confirm_gen ~= confirm_gen then
 			return
 		end
 		state.loading = false
 		if result.status == 0 then
 			local name, url = parse_repo(result.stdout)
 			if name then
-				state.repo = repo_flag(name, url)
+				local repo = repo_flag(name, url)
+				local changed = state.repo ~= nil and state.repo ~= repo
+				state.repo = repo
 				state.repo_url = url
+				state.repo_ok = true
+				cache.repo_put(cwd, repo, url)
 				state.problem = nil
+				state.loading = false
 				if state.want_compose then
 					state.want_compose = false
 					state.composing = true
@@ -427,6 +476,19 @@ local function resolve(state: State)
 					state.create_problem = nil
 					state.viewing = nil
 				end
+				if changed then
+					state.gen += 1
+					state.loading = false
+					state.issues = nil
+					state.shown = {}
+					state.cursor = nil
+					state.viewing = nil
+					state.detail = nil
+					state.detail_problem = nil
+					apply_list_cache(state)
+				elseif state.viewing then
+					load_detail(state, state.viewing)
+				end
 				refresh(state)
 				poll(state)
 				state.cx:render()
@@ -434,11 +496,12 @@ local function resolve(state: State)
 			end
 			state.problem = {
 				kind = "failed",
-				text = "gh 没有返回仓库名。",
+				text = "",
+				key = "gh_no_name",
 				detail = first_lines(result.stdout, 4),
 			}
 		else
-			state.problem = problem_of(result, "无法识别当前项目的 GitHub 仓库。")
+			state.problem = problem_of(result, "cannot_identify")
 			if state.problem.kind == "norepo" then
 				state.problem.detail = cwd
 			end
@@ -447,12 +510,12 @@ local function resolve(state: State)
 	end)
 	if spawn_error then
 		state.loading = false
-		state.problem = { kind = "missing", text = "Tern 无法启动 GitHub CLI。", detail = spawn_error }
+		state.problem = { kind = "missing", text = "", key = "cannot_start_gh", detail = spawn_error }
 	end
 end
 
 refresh = function(state: State)
-	if not alive(state) or state.loading or not state.repo then
+	if not alive(state) or state.loading or not state.repo or not state.repo_ok then
 		return
 	end
 	state.loading = true
@@ -476,18 +539,20 @@ refresh = function(state: State)
 		end
 		state.loading = false
 		if result.status ~= 0 then
-			state.problem = problem_of(result, "无法加载 issue。")
+			state.problem = problem_of(result, "cannot_load")
 		else
 			local issues = parse_issues(result.stdout)
 			if issues then
 				state.issues = issues
 				state.problem = nil
 				state.fetched = os.time()
+				cache.list_put(repo, filter, issues)
 				resort(state)
 			else
 				state.problem = {
 					kind = "failed",
-					text = "gh 返回的不是 issue 列表。",
+					text = "",
+					key = "not_a_list",
 					detail = first_lines(result.stdout, 4),
 				}
 			end
@@ -496,7 +561,7 @@ refresh = function(state: State)
 	end)
 	if spawn_error then
 		state.loading = false
-		state.problem = { kind = "missing", text = "Tern 无法启动 GitHub CLI。", detail = spawn_error }
+		state.problem = { kind = "missing", text = "", key = "cannot_start_gh", detail = spawn_error }
 	end
 end
 
@@ -514,15 +579,26 @@ poll = function(state: State)
 	end)
 end
 
-local function load_detail(state: State, number: number)
+load_detail = function(state: State, number: number)
 	if not state.repo then
 		return
 	end
-	state.viewing = number
-	state.detail = nil
-	state.detail_problem = nil
-	local gen = state.gen
 	local repo = state.repo :: string
+	local cached = cache.detail_get(repo, number)
+	if not state.repo_ok then
+		if not cached then
+			state.cx:toast("info", t("repo_unconfirmed"))
+			return
+		end
+		state.viewing = number
+		state.detail = cached.detail
+		state.detail_problem = nil
+		return
+	end
+	local gen = state.gen
+	state.viewing = number
+	state.detail_problem = nil
+	state.detail = if cached then cached.detail else nil
 	local spawn_error = run_gh({
 		"issue",
 		"view",
@@ -536,16 +612,18 @@ local function load_detail(state: State, number: number)
 			return
 		end
 		if result.status ~= 0 then
-			state.detail_problem = problem_of(result, "无法加载这条 issue。")
+			state.detail_problem = problem_of(result, "cannot_load_one")
 		else
 			local detail = parse_detail(result.stdout)
 			if detail then
 				state.detail = detail
 				state.detail_problem = nil
+				cache.detail_put(repo, number, detail)
 			else
 				state.detail_problem = {
 					kind = "failed",
-					text = "gh 返回的不是一条 issue。",
+					text = "",
+					key = "not_one_issue",
 					detail = first_lines(result.stdout, 4),
 				}
 			end
@@ -553,7 +631,7 @@ local function load_detail(state: State, number: number)
 		state.cx:render()
 	end)
 	if spawn_error then
-		state.detail_problem = { kind = "missing", text = "Tern 无法启动 GitHub CLI。", detail = spawn_error }
+		state.detail_problem = { kind = "missing", text = "", key = "cannot_start_gh", detail = spawn_error }
 	end
 end
 
@@ -567,30 +645,33 @@ end
 
 local function problem_view(problem: Problem, cwd: string?): Node
 	local heads = {
-		missing = "找不到 GitHub CLI",
-		auth = "GitHub CLI 未登录",
-		norepo = "不是 Git 仓库",
-		notgithub = "没有 GitHub 远程",
-		failed = "无法加载 issue",
+		missing = t("head_missing"),
+		auth = t("head_auth"),
+		norepo = t("head_norepo"),
+		notgithub = t("head_notgithub"),
+		failed = t("head_failed"),
 	}
 	local help = {
-		missing = "这个 block 在运行 pane 的机器上执行 `gh`。装好 GitHub CLI 后按 **r**。",
-		auth = "在这台机器的 shell 里运行 `gh auth login`，然后按 **r**。",
-		norepo = "聚焦一个 Git 仓库里的 pane，再从命令面板打开。",
-		notgithub = "给仓库加上 GitHub remote，或在 GitHub 仓库目录里打开。",
-		failed = "按 **r** 再试一次。",
+		missing = t("help_missing"),
+		auth = t("help_auth"),
+		norepo = t("help_norepo"),
+		notgithub = t("help_notgithub"),
+		failed = t("help_failed"),
 	}
-	local children: { Node } = { ui.md((help[problem.kind] or "") .. "\n\n" .. problem.text) }
+	local children: { Node } = { ui.md((help[problem.kind] or "") .. "\n\n" .. problem_text(problem)) }
 	local where = problem.detail
+	if problem.key == "no_cwd" then
+		where = t("no_cwd_detail")
+	end
 	if (not where or where == "") and cwd then
 		where = cwd
 	end
 	if where and where ~= "" then
 		table.insert(children, ui.code(where))
 	end
-	local buttons: { Node } = { button("重试", "retry", "accent") }
+	local buttons: { Node } = { button(t("retry"), "retry", "accent") }
 	if problem.kind == "missing" then
-		table.insert(buttons, button("安装说明", "install", "neutral"))
+		table.insert(buttons, button(t("install"), "install", "neutral"))
 	end
 	table.insert(children, ui.row(buttons))
 	local card = ui.card(heads[problem.kind] or "GitHub Issues", children)
@@ -608,7 +689,7 @@ local function filter_row(state: State): Node
 	local badges: { Node } = {}
 	for _, id in { "open", "closed", "all" } do
 		local tone = if id == state.filter then "accent" else "neutral"
-		local node = ui.badge(FILTER_LABEL[id] or id, tone)
+		local node = ui.badge(filter_word(id), tone)
 		local props: { [string]: any } = node.p or {}
 		props.actions = { click = "filter=" .. id }
 		props.key = id
@@ -661,9 +742,9 @@ local function list_view(state: State): Node
 		kids[i].p = props
 	end
 	local empty = if state.filter == "closed"
-		then "没有已关闭的 issue。"
-		elseif state.filter == "all" then "这个仓库没有 issue。"
-		else "没有打开的 issue。"
+		then t("empty_closed")
+		elseif state.filter == "all" then t("empty_all")
+		else t("empty_open")
 	local props: { [string]: any } = list.p or {}
 	props.key = "queue"
 	props.selected = if state.cursor then LIST_ID .. state.cursor else nil
@@ -677,22 +758,25 @@ local function dock_view(state: State): Node
 	if state.viewing then
 		return ui.col({
 			ui.text({
-				ui.span("esc 返回   b 浏览器   y 复制   r 重载", "dim"),
+				ui.span(t("dock_detail"), "dim"),
 			}),
 		})
 	end
 	local status: { Span } = {}
 	if state.issues then
-		local word = FILTER_LABEL[state.filter] or state.filter
-		table.insert(status, ui.span(#state.shown .. " 条" .. word, "strong"))
+		local count_key = if state.filter == "closed"
+			then "count_closed"
+			elseif state.filter == "all" then "count_all"
+			else "count_open"
+		table.insert(status, ui.span(tf(count_key, #state.shown), "strong"))
 		if #state.shown == LIST_LIMIT then
-			table.insert(status, ui.span("  只显示前 " .. LIST_LIMIT .. " 条", "muted"))
+			table.insert(status, ui.span(tf("limit_note", LIST_LIMIT), "muted"))
 		end
 	end
 	if state.loading then
-		table.insert(status, ui.span("  刷新中…", "muted"))
+		table.insert(status, ui.span(t("refreshing"), "muted"))
 	elseif state.fetched then
-		table.insert(status, ui.span("  更新于 " .. os.date("%H:%M", state.fetched), "muted"))
+		table.insert(status, ui.span(tf("updated_at", os.date("%H:%M", state.fetched)), "muted"))
 	end
 	local lines: { Node } = {}
 	if #status > 0 then
@@ -700,9 +784,9 @@ local function dock_view(state: State): Node
 	end
 	local problem = state.problem
 	if problem and state.issues then
-		table.insert(lines, ui.text({ ui.span(problem.text, "warning"), ui.span("  仍显示上次的列表", "muted") }))
+		table.insert(lines, ui.text({ ui.span(problem_text(problem), "warning"), ui.span(t("showing_last"), "muted") }))
 	end
-	table.insert(lines, ui.text({ ui.span("↑↓ 移动   ⏎ 查看   n 新建   b 浏览器   y 复制   r 刷新   s 切换状态", "dim") }))
+	table.insert(lines, ui.text({ ui.span(t("dock_list"), "dim") }))
 	return ui.col({ ui.lines(lines) })
 end
 
@@ -712,7 +796,7 @@ local function detail_view(state: State): Node
 		if state.detail_problem then
 			return problem_view(state.detail_problem, state.cwd)
 		end
-		return ui.progress(nil, "正在加载 #" .. tostring(state.viewing) .. "…")
+		return ui.progress(nil, tf("loading_one", tostring(state.viewing)))
 	end
 	local closed = detail.state == "CLOSED"
 	local head: { Span } = {
@@ -720,7 +804,7 @@ local function detail_view(state: State): Node
 		ui.span(detail.title, "strong"),
 	}
 	local badges: { Node } = {
-		ui.badge(if closed then "已关闭" else "打开", if closed then "muted" else "success"),
+		ui.badge(if closed then t("badge_closed") else t("badge_open"), if closed then "muted" else "success"),
 	}
 	for i, name in detail.labels do
 		if i > 6 then
@@ -731,15 +815,15 @@ local function detail_view(state: State): Node
 	local children: { Node } = {
 		ui.row(badges),
 		ui.kv({
-			{ "作者", "@" .. detail.author },
-			{ "更新", age(detail.updated) },
-			{ "评论", tostring(#detail.comments) },
+			{ t("author"), "@" .. detail.author },
+			{ t("updated"), age(detail.updated) },
+			{ t("comments"), tostring(#detail.comments) },
 		}),
 	}
 	if detail.body ~= "" then
 		table.insert(children, ui.md(detail.body))
 	else
-		table.insert(children, ui.text({ ui.span("这条 issue 没有正文。", "muted") }))
+		table.insert(children, ui.text({ ui.span(t("no_body"), "muted") }))
 	end
 	local shown = math.min(#detail.comments, COMMENT_LIMIT)
 	if shown > 0 then
@@ -755,18 +839,18 @@ local function detail_view(state: State): Node
 			end
 		end
 		if #detail.comments > shown then
-			table.insert(notes, ui.text({ ui.span("还有 " .. (#detail.comments - shown) .. " 条评论未显示。", "muted") }))
+			table.insert(notes, ui.text({ ui.span(tf("more_comments", #detail.comments - shown), "muted") }))
 		end
-		local section = ui.section("评论", notes)
+		local section = ui.section(t("comments_section"), notes)
 		local props: { [string]: any } = section.p or {}
 		props.collapsible = true
 		section.p = props
 		table.insert(children, section)
 	end
 	table.insert(children, ui.row({
-		button("浏览器打开", "browser", "accent"),
-		button("复制链接", "copy", "neutral"),
-		button("返回", "back", "neutral"),
+		button(t("open_browser"), "browser", "accent"),
+		button(t("copy_link"), "copy", "neutral"),
+		button(t("back"), "back", "neutral"),
 	}))
 	return ui.card(head, children)
 end
@@ -784,7 +868,7 @@ end
 local function copy_url(cx: BlockCx, url: string?)
 	if url then
 		cx:copy(url)
-		cx:toast("info", "已复制链接")
+		cx:toast("info", t("copied"))
 	end
 end
 
@@ -814,9 +898,13 @@ local function set_filter(state: State, filter: string)
 		return
 	end
 	state.filter = filter
-	-- 仓库还没识别出来时，resolve 的回调靠 gen 判断自己是否过期。
-	-- 这里如果递增 gen，回调会被丢掉；refresh 又因没有 repo 直接返回，界面停在「正在识别」。
-	if not state.repo then
+	-- 仓库还没确认时，s 只切换已缓存的列表，不递增 confirm_gen，也不发请求。
+	if not state.repo_ok then
+		state.issues = nil
+		state.shown = {}
+		state.cursor = nil
+		state.problem = nil
+		apply_list_cache(state)
 		return
 	end
 	state.gen += 1
@@ -825,6 +913,7 @@ local function set_filter(state: State, filter: string)
 	state.shown = {}
 	state.cursor = nil
 	state.problem = nil
+	apply_list_cache(state)
 	refresh(state)
 end
 
@@ -832,7 +921,7 @@ local function retry(state: State)
 	state.gen += 1
 	state.loading = false
 	state.problem = nil
-	if state.repo then
+	if state.repo_ok then
 		refresh(state)
 	else
 		resolve(state)
@@ -859,7 +948,7 @@ local function pop_char(s: string): string
 end
 
 local function begin_compose(state: State)
-	if state.creating then
+	if state.creating or not state.repo_ok then
 		return
 	end
 	state.composing = true
@@ -896,13 +985,16 @@ local function issue_number_from(stdout: string): number?
 end
 
 local function create_issue(state: State)
-	if state.creating or not state.repo then
+	if state.creating or not state.repo or not state.repo_ok then
+		if not state.repo_ok then
+			state.create_problem = { kind = "failed", text = "", key = "repo_unconfirmed" }
+		end
 		return
 	end
 	local title = string.gsub(state.draft_title, "^%s+", "")
 	title = string.gsub(title, "%s+$", "")
 	if title == "" then
-		state.create_problem = { kind = "failed", text = "标题不能为空。" }
+		state.create_problem = { kind = "failed", text = "", key = "title_required" }
 		return
 	end
 	state.creating = true
@@ -925,7 +1017,7 @@ local function create_issue(state: State)
 		end
 		state.creating = false
 		if result.status ~= 0 then
-			state.create_problem = problem_of(result, "无法创建 issue。")
+			state.create_problem = problem_of(result, "cannot_create")
 			state.cx:render()
 			return
 		end
@@ -942,15 +1034,15 @@ local function create_issue(state: State)
 		refresh(state)
 		if number then
 			load_detail(state, number)
-			state.cx:toast("info", "已创建 #" .. tostring(number))
+			state.cx:toast("info", tf("created_num", tostring(number)))
 		else
-			state.cx:toast("info", "已创建 issue")
+			state.cx:toast("info", t("created"))
 		end
 		state.cx:render()
 	end)
 	if spawn_error then
 		state.creating = false
-		state.create_problem = { kind = "missing", text = "Tern 无法启动 GitHub CLI。", detail = spawn_error }
+		state.create_problem = { kind = "missing", text = "", key = "cannot_start_gh", detail = spawn_error }
 	end
 end
 
@@ -964,18 +1056,18 @@ local function compose_view(state: State, cx: BlockCx): Node
 		key = "title",
 		text = state.draft_title,
 		cursor = utf16_len(state.draft_title),
-		placeholder = "标题",
+		placeholder = t("title_ph"),
 	})
 	local body = ui.node("editor", {
 		key = "body",
 		text = state.draft_body,
 		cursor = utf16_len(state.draft_body),
-		placeholder = "正文，可留空",
+		placeholder = t("body_ph"),
 		maxLines = 10,
 	})
 	local children: { Node } = {
 		ui.text({
-			ui.span("新建 issue", "strong"),
+			ui.span(t("new_issue"), "strong"),
 			ui.span("  " .. (state.repo or ""), "muted"),
 		}),
 		title,
@@ -983,15 +1075,15 @@ local function compose_view(state: State, cx: BlockCx): Node
 	}
 	local problem = state.create_problem
 	if problem then
-		table.insert(children, ui.text({ ui.span(problem.text, "error") }))
+		table.insert(children, ui.text({ ui.span(problem_text(problem), "error") }))
 		if problem.detail and problem.detail ~= "" then
 			table.insert(children, ui.code(problem.detail))
 		end
 	end
-	local submit = if state.creating then "正在创建…" else "创建"
+	local submit = if state.creating then t("creating") else t("create")
 	table.insert(children, ui.row({
 		button(submit, "create", "accent"),
-		button("取消", "cancel", "neutral"),
+		button(t("cancel"), "cancel", "neutral"),
 	}))
 	return ui.col(children)
 end
@@ -1090,6 +1182,8 @@ tern.block.define("list", {
 			creating = false,
 			create_problem = nil,
 			want_compose = args[2] == "new",
+			repo_ok = false,
+			confirm_gen = 0,
 		}
 		running[cx.pane] = state
 		resolve(state)
@@ -1119,7 +1213,7 @@ tern.block.define("list", {
 		if state.composing then
 			return {
 				main = compose_view(state, cx),
-				dock = ui.col({ ui.text({ ui.span("esc 取消   tab 切换   ⌘⏎ 创建", "dim") }) }),
+				dock = ui.col({ ui.text({ ui.span(t("compose_dock"), "dim") }) }),
 			}
 		end
 		local dock = if state.issues or state.viewing or state.repo then dock_view(state) else nil
@@ -1135,11 +1229,11 @@ tern.block.define("list", {
 		elseif state.problem then
 			main = problem_view(state.problem, state.cwd)
 		else
-			local where = if state.repo then state.repo elseif state.cwd then basename(state.cwd) else "当前项目"
-			local word = FILTER_LABEL[state.filter] or state.filter
+			local where = if state.repo then state.repo elseif state.cwd then basename(state.cwd) else t("current_project")
+			local word = filter_word(state.filter)
 			local label = if state.repo
-				then "正在加载 " .. where .. " 的" .. word .. " issue…"
-				else "正在识别 " .. where .. "（" .. word .. "）…"
+				then tf("loading_issues", where, word)
+				else tf("identifying", where, word)
 			main = ui.progress(nil, label)
 		end
 		return { main = ui.col({ main }), dock = dock }
@@ -1195,8 +1289,12 @@ tern.block.define("list", {
 			retry(state)
 		elseif name == "s" then
 			set_filter(state, FILTER_NEXT[state.filter] or "open")
-		elseif name == "n" and state.repo then
-			begin_compose(state)
+		elseif name == "n" then
+			if not state.repo_ok then
+				cx:toast("info", t("repo_unconfirmed"))
+			elseif state.repo then
+				begin_compose(state)
+			end
 		else
 			return false
 		end

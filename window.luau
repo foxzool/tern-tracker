@@ -2,6 +2,7 @@
 -- 从当前聚焦 pane 的目录打开 issue 列表。
 
 local KIND = "gh-issues.list"
+local i18n = require("./i18n")
 
 local function project_cwd(cx: WindowCx): string?
 	local id = cx.session:focused()
@@ -18,7 +19,7 @@ end
 local function open_issues(cx: WindowCx, compose: boolean?)
 	local cwd = project_cwd(cx)
 	if not cwd then
-		cx:toast("error", "没有当前项目", "先聚焦一个位于项目目录的 pane。")
+		cx:toast("error", i18n.t("no_project"), i18n.t("no_project_sub"))
 		return
 	end
 	local args = { cwd }
@@ -47,35 +48,58 @@ local function open_issues(cx: WindowCx, compose: boolean?)
 		end
 	end
 	if cx:new_block(KIND, args, "beside") == nil then
-		cx:toast("error", "GitHub Issues 未在此 host 加载", "在运行 pane 的机器上安装这个插件。")
+		cx:toast("error", i18n.t("not_loaded"), i18n.t("not_loaded_sub"))
 	end
 end
 
-tern.command({
-	id = "open",
-	title = "查看当前项目的 Issues",
-	icon = "list",
-	keys = { "alt+shift+cmd+i" },
-	run = function(cx)
-		open_issues(cx, false)
-	end,
-})
+local function refresh_open_blocks(cx: WindowCx)
+	for _, pane in cx.session:panes() do
+		local title = pane.title
+		if type(title) == "string" and string.sub(title, 1, 6) == "Issues" then
+			cx.session:event(pane.pane, { ev = "action", act = "lang" })
+		end
+	end
+end
 
-tern.command({
-	id = "create",
-	title = "新建当前项目的 Issue",
-	icon = "plus",
-	run = function(cx)
-		open_issues(cx, true)
-	end,
-})
+local function register_commands()
+	tern.command({
+		id = "open",
+		title = i18n.t("cmd_open"),
+		icon = "list",
+		keys = { "alt+shift+cmd+i" },
+		run = function(cx)
+			open_issues(cx, false)
+		end,
+	})
+	tern.command({
+		id = "create",
+		title = i18n.t("cmd_create"),
+		icon = "plus",
+		run = function(cx)
+			open_issues(cx, true)
+		end,
+	})
+	tern.command({
+		id = "lang",
+		title = i18n.t("cmd_lang"),
+		icon = "globe",
+		run = function(cx)
+			i18n.toggle()
+			register_commands()
+			cx:toast("info", i18n.t("lang_switched"))
+			refresh_open_blocks(cx)
+		end,
+	})
+end
+
+register_commands()
 
 -- 右上角图标。Tern 没有工具栏按钮 API，可点击的 chrome 只有状态栏分段。
 -- 分段本身在状态栏里，CSS 把它固定到标题栏右侧，点它打开 issue 列表。
 tern.chrome.status(function(_pane)
 	return {
 		{
-			text = "Issues",
+			text = " ",
 			icon = "hash",
 			command = "plugin.gh-issues.open",
 		},
@@ -103,6 +127,8 @@ tern.css("toolbar", [[
 	height: 28px;
 	margin: 0;
 	padding: 0;
+	gap: 0;
+	overflow: hidden;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -112,9 +138,10 @@ tern.css("toolbar", [[
 	color: var(--t2, currentColor);
 	background: transparent;
 }
-#statusline .sl-plugin[data-plugin="gh-issues"] svg {
+#statusline .sl-plugin[data-plugin="gh-issues"] .ico {
 	width: 15px;
 	height: 15px;
+	flex: none;
 }
 #statusline .sl-plugin[data-plugin="gh-issues"]:hover {
 	background: var(--l2, rgba(128, 128, 128, 0.16));

@@ -1,53 +1,66 @@
 # GitHub Issues
 
-查看当前项目的 GitHub issue。
+View GitHub issues for the current project.
 
-插件读取聚焦 pane 的目录，用 `gh repo view` 识别 `owner/repo`，再列出这个仓库的 issue。
+The plugin reads the focused pane's directory, identifies `owner/repo` with `gh repo view`, and lists that repository's issues.
 
-## 准备
+[中文](README.zh.md)
 
-在运行 pane 的机器上安装 [GitHub CLI](https://cli.github.com)，并执行 `gh auth login`。
+## Requirements
 
-## 安装
+Install the [GitHub CLI](https://cli.github.com) on the machine that runs your panes, then run `gh auth login`.
 
-在插件目录执行：
+## Install
+
+From the plugin directory:
 
 ```sh
 tern plugin link .
 ```
 
-## 打开
+## Open
 
-聚焦一个位于 Git 仓库里的 pane，然后：
+Focus a pane inside a Git repository, then:
 
-- 命令面板：`查看当前项目的 Issues`
-- 快捷键：⌥⇧⌘I
-- 标题栏右侧的 `#` 图标
+- Command palette: `View issues for this project`
+- Shortcut: ⌥⇧⌘I
+- The `#` icon in the top-right of the title bar. It has no text.
 
-已有同一目录的 Issues pane 时，命令会聚焦它，而不是再开一个。
+If an Issues pane for that directory is already open, the command focuses it instead of opening another.
 
-## 按键
+## Language
 
-新建：
+The interface follows `LANG` / `LC_ALL` until you choose a language. Chinese locales (`zh*`) use Chinese. Anything else uses English.
 
-| 键 | 作用 |
+Switch from the command palette:
+
+- `使用中文` when the interface is English
+- `Use English` when the interface is Chinese
+
+The choice is saved and shared by every window.
+
+## Keys
+
+New issue:
+
+| Key | Action |
 | --- | --- |
-| n | 打开新建表单 |
-| tab | 在标题和正文之间切换 |
-| ⌘⏎ | 创建 |
-| esc | 取消 |
+| n | Open the new-issue form |
+| tab | Move between title and body |
+| ⌘⏎ | Create |
+| esc | Cancel |
 
-命令面板里的「新建当前项目的 Issue」也打开这个表单。标题必填，正文可空。创建成功后打开新 issue。
+`New issue for this project` in the command palette opens the same form. A title is required. The body may be empty. After a successful create, the new issue opens.
 
-列表：
+List:
 
-| 键 | 作用 |
+| Key | Action |
 | --- | --- |
-| ↑↓ 或 k j | 移动 |
-| ⏎ 或 o | 查看正文和评论 |
-| b | 在浏览器打开 |
-| y | 复制链接 |
-| r | 刷新 |
-| s | 切换 打开 / 已关闭 / 全部 |
+| ↑↓ or k j | Move |
+| ⏎ or o | View the body and comments |
+| b | Open in the browser |
+| y | Copy the link |
+| r | Refresh |
+| s | Cycle Open / Closed / All |
 
-正文里按 esc 返回。列表每两分钟刷新一次，最多显示 100 条。
+Press esc in the detail view to go back. The list refreshes every two minutes and shows at most 100 issues. Reopening a project shows the last list and issue body immediately, then refreshes them in the background.
