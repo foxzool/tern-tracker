@@ -26,7 +26,7 @@ Focus a pane inside a Git repository, then:
 - Shortcut: ⌥⇧⌘I
 - The `#` icon in the top-right of the title bar. It has no text.
 
-If a Tracker pane for that directory is already open, the command focuses it instead of opening another.
+If a Tracker pane for that directory is already open, the shortcut closes it. `New issue` and `Open pull requests` still focus the existing pane.
 
 ## Language
 

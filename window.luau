@@ -30,11 +30,14 @@ local function open_tracker(cx: WindowCx, mode: string?)
 	for _, pane in cx.session:panes() do
 		local title = pane.title
 		if pane.cwd == cwd and type(title) == "string" and string.sub(title, 1, #TITLE) == TITLE then
-			cx.layout:focus(pane.pane)
 			if mode == "new" then
+				cx.layout:focus(pane.pane)
 				cx.session:event(pane.pane, { ev = "action", act = "compose" })
 			elseif mode == "pull" then
+				cx.layout:focus(pane.pane)
 				cx.session:event(pane.pane, { ev = "action", act = "pulls" })
+			else
+				cx.layout:close(pane.pane)
 			end
 			return
 		end
