@@ -26,7 +26,7 @@ tern plugin link .
 - 快捷键：⌥⇧⌘I
 - 标题栏右上角的 `#` 图标，没有文字
 
-已有同一目录的 Tracker pane 时，快捷键会关掉它。新建和打开 Pull requests 仍会聚焦已有 pane。
+已有同一目录的 Tracker pane 时，快捷键会聚焦它；已聚焦时再按一次才关掉。新建和打开 Pull requests 仍会聚焦已有 pane。
 
 ## 语言
 

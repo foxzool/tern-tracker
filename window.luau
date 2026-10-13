@@ -36,8 +36,10 @@ local function open_tracker(cx: WindowCx, mode: string?)
 			elseif mode == "pull" then
 				cx.layout:focus(pane.pane)
 				cx.session:event(pane.pane, { ev = "action", act = "pulls" })
-			else
+			elseif pane.focused then
 				cx.layout:close(pane.pane)
+			else
+				cx.layout:focus(pane.pane)
 			end
 			return
 		end
