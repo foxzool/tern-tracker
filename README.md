@@ -69,6 +69,10 @@ List:
 
 Press esc in the detail view to go back. The list refreshes every two minutes and shows at most 100 issues. Reopening a project shows the last list and issue body immediately, then refreshes them in the background.
 
+## Troubleshooting
+
+If the shortcut and the `#` icon stop responding, Tern has disabled the plugin: a hook that exceeds its time budget is disabled until reload (`plugin hook exceeded its budget` in `~/Library/Logs/Tern/tern.log`). Run `tern plugin reload` to bring it back.
+
 ## License
 
 Apache License 2.0. Copyright 2026 ZoOL. See [LICENSE](LICENSE).

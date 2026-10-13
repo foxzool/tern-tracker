@@ -69,6 +69,10 @@ tern plugin link .
 
 正文里按 esc 返回。列表每两分钟刷新一次，最多显示 100 条。再次打开同一项目时，先显示上次的列表和正文，再在后台刷新。
 
+## 故障排查
+
+快捷键和 `#` 图标都没反应时，是 Tern 禁用了插件：hook 超出时间预算会被禁用直到重载（`~/Library/Logs/Tern/tern.log` 里有 `plugin hook exceeded its budget`）。运行 `tern plugin reload` 即可恢复。
+
 ## 授权
 
 Apache License 2.0。版权所有 2026 ZoOL。见 [LICENSE](LICENSE)。
