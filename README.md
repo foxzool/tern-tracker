@@ -24,7 +24,7 @@ Focus a pane inside a Git repository, then:
 
 - Command palette: `Open tracker for this project`
 - Shortcut: ⌥⇧⌘I
-- The `#` icon in the top-right of the title bar. It has no text.
+- The `#` icon at the top-right of the title bar, just left of the toolbar buttons. It has no text.
 
 If a Tracker pane for that directory is already open, the shortcut focuses it; pressing it again while it is focused closes it. `New issue` and `Open pull requests` focus the existing pane.
 

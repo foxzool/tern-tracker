@@ -110,8 +110,10 @@ end
 
 register_commands()
 
--- 右上角图标。Tern 没有工具栏按钮 API，可点击的 chrome 只有状态栏分段。
--- 分段本身在状态栏里，CSS 把它固定到标题栏右侧，点它打开 Tracker。
+-- `#` 固定在标题栏右上角，紧挨 tab bar 右侧那排按钮的左边。
+-- Stencil 把 footer 的子元素裁在 footer 自己的框里。只写 position:fixed 时，
+-- 布局在 y=6，但画不出来。把 footer 拉成全窗透明层，行仍贴底，# 才能画在标题栏上。
+-- z-index 31 比 #tabbar 的 30 高一层，避免被标题栏盖住。right: 224px 让 28px 的盒子落在工具按钮左边。
 tern.chrome.status(function(_pane)
 	return {
 		{
@@ -122,22 +124,19 @@ tern.chrome.status(function(_pane)
 	}
 end)
 
-tern.on("window_start", function(cx)
-	if cx.settings:get("status_bar") ~= true then
-		cx.settings:set("status_bar", true)
-	end
-end)
-tern.timer(0, function(cx)
-	if cx and cx.settings:get("status_bar") ~= true then
-		cx.settings:set("status_bar", true)
-	end
-end)
-
 tern.css("toolbar", [[
-#statusline .sl-plugin[data-plugin="tracker"] {
+footer#widgetbar {
+	z-index: 31 !important;
+	top: 0 !important;
+	height: 100% !important;
+	background: transparent !important;
+	align-items: flex-end !important;
+}
+#widgetbar .wg-seg[data-plugin="tracker"] {
 	position: fixed;
+	pointer-events: auto;
 	top: 6px;
-	right: 200px;
+	right: 224px;
 	z-index: 40;
 	width: 28px;
 	height: 28px;
@@ -148,18 +147,19 @@ tern.css("toolbar", [[
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	border-radius: 6px;
-	font-size: 0;
-	line-height: 0;
+	border-radius: 8px;
 	color: var(--t2, currentColor);
 	background: transparent;
 }
-#statusline .sl-plugin[data-plugin="tracker"] .ico {
+#widgetbar .wg-seg[data-plugin="tracker"] .wg-status-text {
+	display: none;
+}
+#widgetbar .wg-seg[data-plugin="tracker"] svg.ico {
 	width: 15px;
 	height: 15px;
 	flex: none;
 }
-#statusline .sl-plugin[data-plugin="tracker"]:hover {
+#widgetbar .wg-seg[data-plugin="tracker"]:hover {
 	background: var(--l2, rgba(128, 128, 128, 0.16));
 	color: var(--t1, currentColor);
 }
